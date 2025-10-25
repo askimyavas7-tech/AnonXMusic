@@ -1,9 +1,15 @@
-FROM python:latest
+FROM python:3.10-slim-buster
 
-RUN apt-get update -y && apt-get upgrade -y
-RUN apt-get install -y --no-install-recommends ffmpeg && apt-get clean
+WORKDIR /app
 
-RUN pip3 install -U pip
-RUN pip3 install -U -r requirements.txt
+RUN apt-get update && \
+    apt-get install -y ffmpeg git curl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY . /app
+
+RUN pip3 install --no-cache-dir -U pip setuptools wheel
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 CMD bash start
