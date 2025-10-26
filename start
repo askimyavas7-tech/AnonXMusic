@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
+# Modülü çalıştırır.
 exec python3 -m anony
