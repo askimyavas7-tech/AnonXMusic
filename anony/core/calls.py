@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 # This file is part of AnonXMusic
 
-
 from ntgcalls import ConnectionNotFound, TelegramServerError
 from pyrogram.types import InputMediaPhoto, Message
 from pytgcalls import PyTgCalls, exceptions, types
@@ -32,13 +31,11 @@ class TgCall(PyTgCalls):
             await client.leave_call(chat_id, close=False)
         except:
             pass
-
         try:
             queue.clear(chat_id)
             await db.remove_call(chat_id)
         except:
             pass
-
 
     async def play_media(
         self,
@@ -98,21 +95,17 @@ class TgCall(PyTgCalls):
             await self.stop(chat_id)
             await message.edit_text(_lang["error_tg_server"])
 
-
     async def replay(self, chat_id: int) -> None:
         if not await db.get_call(chat_id):
             return
-
         media = queue.get_current(chat_id)
         _lang = await lang.get_lang(chat_id)
         msg = await app.send_message(chat_id=chat_id, text=_lang["play_again"])
         await self.play_media(chat_id, msg, media)
 
-
     async def play_next(self, chat_id: int) -> None:
         if not await db.get_call(chat_id):
             return
-
         m_id = queue.get_current(chat_id).message_id
         media = queue.get_next(chat_id)
         try:
@@ -124,10 +117,8 @@ class TgCall(PyTgCalls):
             media.message_id = None
         except:
             pass
-
         if not media:
             return await self.stop(chat_id)
-
         _lang = await lang.get_lang(chat_id)
         msg = await app.send_message(chat_id=chat_id, text=_lang["play_next"])
         if not media.file_path:
@@ -138,32 +129,28 @@ class TgCall(PyTgCalls):
                 return await msg.edit_text(
                     _lang["error_no_file"].format(config.SUPPORT_CHAT)
                 )
-
         media.message_id = msg.id
         await self.play_media(chat_id, msg, media)
-
 
     async def ping(self) -> float:
         pings = [client.ping for client in self.clients]
         return round(sum(pings) / len(pings), 2)
 
-
     async def decorators(self, client: PyTgCalls) -> None:
         for client in self.clients:
 
-            @client.on_update()
-            async def update_handler(_, update: types.Update) -> None:
-                if isinstance(update, types.StreamEnded):
-                    if update.stream_type == types.StreamEnded.Type.AUDIO:
-                        await self.play_next(update.chat_id)
-                elif isinstance(update, types.ChatUpdate):
-                    if update.status in [
-                        types.ChatUpdate.Status.KICKED,
-                        types.ChatUpdate.Status.LEFT_GROUP,
-                        types.ChatUpdate.Status.CLOSED_VOICE_CHAT,
-                    ]:
-                        await self.stop(update.chat_id)
+            @client.on_stream_end()
+            async def stream_end_handler(_, update: types.StreamEnded) -> None:
+                await self.play_next(update.chat_id)
 
+            @client.on_closed_voice_chat()
+            async def closed_vc_handler(_, update: types.ChatUpdate) -> None:
+                await self.stop(update.chat_id)
+
+            @client.on_left()
+            @client.on_kicked()
+            async def left_or_kicked_handler(_, update: types.ChatUpdate) -> None:
+                await self.stop(update.chat_id)
 
     async def boot(self) -> None:
         PyTgCallsSession.notice_displayed = True
