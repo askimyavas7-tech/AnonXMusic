@@ -8,3 +8,5 @@ py-tgcalls~=2.2.8
 py-yt-search~=0.3
 python-dotenv~=1.1.1
 yt-dlp>=2025.10.22
+pytgcalls==0.9.7
+ffmpeg-python
