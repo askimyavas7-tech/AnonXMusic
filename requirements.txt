@@ -8,3 +8,4 @@ python-dotenv~=1.1.1
 yt-dlp>=2025.10.22
 py-tgcalls==2.0.0
 ffmpeg-python
+py-yt
