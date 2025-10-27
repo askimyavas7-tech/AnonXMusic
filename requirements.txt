@@ -9,5 +9,5 @@ yt-dlp>=2025.10.22
 ffmpeg-python
 py-yt-search
 
-# ✅ Ses sistemi (Heroku uyumlu stabil)
+# ✅ Ses sistemi stabil
 py-tgcalls==1.2.9
