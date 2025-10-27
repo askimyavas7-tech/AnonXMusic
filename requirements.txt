@@ -10,5 +10,5 @@ py-yt-search
 ffmpeg-python
 
 # Sesli Sohbet Bağımlılıkları (UYUMLU)
-py-tgcalls==1.2.9
+py-tgcalls==1.0.0
 ntgcalls==1.1.3
