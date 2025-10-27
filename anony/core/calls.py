@@ -76,12 +76,10 @@ class TgCall(PyTgCalls):
                 _lang["error_no_file"].format(config.SUPPORT_CHAT)
             )
 
-        # Ses akışı parametreleri (yüksek kalite)
-        stream = types.StreamAudio(
-            media.file_path,
-            types.HighQualityAudio(),
-            seek=seek_time if isinstance(seek_time, int) and seek_time > 0 else 0,
-        )
+     stream = types.AudioPiped(
+    media.file_path,
+    audio_parameters=types.HighQualityAudio()
+     )
 
         # Otomatik reconnect / retry
         retry = 0
