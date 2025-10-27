@@ -1,18 +1,32 @@
+# anony/core/calls.py
 # Copyright (c) 2025 AnonymousX1025
 # Licensed under the MIT License.
 # This file is part of AnonXMusic
-#
-# Stabil ses akışı için: py-tgcalls==1.2.9, ntgcalls==1.2.3
+
+# PY-TGCALLS 1.2.9 (ses odaklı) uyumlu, Heroku-stabil sürüm.
 
 import asyncio
+from typing import List
+
 from ntgcalls import ConnectionNotFound, TelegramServerError
 from pyrogram.types import InputMediaPhoto, Message
 from pytgcalls import PyTgCalls, exceptions
 from pytgcalls.pytgcalls_session import PyTgCallsSession
 
-# >>> py-tgcalls 1.2.9'da doğru import yolları
-from pytgcalls.types.input_stream import AudioPiped
-from pytgcalls.types.input_stream.quality import HighQualityAudio
+# ---- py-tgcalls türleri, farklı yerleşimler için güvenli import ----
+try:
+    # En yaygın v1.2.x yerleşimi
+    from pytgcalls.types.input_stream import AudioPiped  # type: ignore
+    from pytgcalls.types.input_stream.quality import HighQualityAudio  # type: ignore
+except Exception:  # Bazı paketlerde input_stream altmodülü yok
+    try:
+        from pytgcalls.types import AudioPiped  # type: ignore
+        from pytgcalls.types import HighQualityAudio  # type: ignore
+    except Exception:
+        # Son çare: isimler farklıysa, çalışma anında patlamasın diye None verelim;
+        # play sırasında uygun hata mesajı basacağız.
+        AudioPiped = None  # type: ignore
+        HighQualityAudio = None  # type: ignore
 
 from anony import app, config, db, lang, logger, queue, userbot, yt
 from anony.helpers import Media, Track, buttons, thumb
@@ -20,16 +34,16 @@ from anony.helpers import Media, Track, buttons, thumb
 
 class TgCall(PyTgCalls):
     def __init__(self):
-        # pyrogram.Client tabanlı tüm PyTgCalls client'ları
-        self.clients: list[PyTgCalls] = []
+        # pyrogram.Client’lardan başlatılan PyTgCalls client listesi
+        self.clients: List[PyTgCalls] = []
 
     # -------------------------
-    # BASİC KONTROLLER
+    # TEMEL KONTROLLER
     # -------------------------
     async def pause(self, chat_id: int) -> bool:
         client = await db.get_assistant(chat_id)
         await db.playing(chat_id, paused=True)
-        # v1.2.9'da pause_stream / resume_stream var
+        # 1.2.9’da metod isimleri pause_stream/resume_stream
         return await client.pause_stream(chat_id)
 
     async def resume(self, chat_id: int) -> bool:
@@ -39,12 +53,12 @@ class TgCall(PyTgCalls):
 
     async def stop(self, chat_id: int) -> None:
         client = await db.get_assistant(chat_id)
-        # Sesli sohbetten çık
+        # Sesten çık
         try:
             await client.leave_call(chat_id, False)
         except Exception:
             pass
-        # Kuyruğu ve DB kaydını temizle
+        # Kuyruk + DB temizliği
         try:
             queue.clear(chat_id)
             await db.remove_call(chat_id)
@@ -59,49 +73,44 @@ class TgCall(PyTgCalls):
         chat_id: int,
         message: Message,
         media: Media | Track,
-        seek_time: int = 0,
+        seek_time: int = 0,  # Not: 1.2.9’da seek’i ffmpeg parametreleriyle vermek zor; basit tutuyoruz
     ) -> None:
         """
-        Ses akışı: AudioPiped + HighQualityAudio.
-        py-tgcalls 1.2.9 API’si ile uyumlu.
+        Sadece ses akışı: AudioPiped + HighQualityAudio
         """
-        client = await db.get_assistant(chat_id)
         _lang = await lang.get_lang(chat_id)
+        client = await db.get_assistant(chat_id)
 
-        # Kapak görseli
+        # Gerekli sınıflar mevcut mu?
+        if AudioPiped is None or HighQualityAudio is None:
+            await self.stop(chat_id)
+            return await message.edit_text(_lang["error_tg_server"])
+
+        # Kapak
         _thumb = (
             await thumb.generate(media)
             if isinstance(media, Track)
             else config.DEFAULT_THUMB
         )
 
-        # Dosya yolu şart
+        # Kaynak dosya
         if not getattr(media, "file_path", None):
             return await message.edit_text(
                 _lang["error_no_file"].format(config.SUPPORT_CHAT)
             )
 
-        # ffmpeg -ss desteği: AudioPiped input'unda seek vermek için
-        # input_options ile -ss gönderiyoruz (seek_time > 1 ise)
-        input_opts = []
-        if isinstance(seek_time, int) and seek_time > 1:
-            input_opts = ["-ss", str(seek_time)]
+        # Akış oluştur
+        stream = AudioPiped(media.file_path, audio_parameters=HighQualityAudio())
 
-        stream = AudioPiped(
-            media.file_path,
-            audio_parameters=HighQualityAudio(),
-            input_stream_params={"input_options": input_opts} if input_opts else None,
-        )
-
-        # Otomatik reconnect / retry
+        # Bağlan / yeniden dene
         retry = 0
         while True:
             try:
-                # v1.2.9'da join_call kullanımı
                 await client.join_call(chat_id, stream)
                 media.playing = True
                 await db.add_call(chat_id)
 
+                # Şarkı bilgisini gönder
                 await message.edit_media(
                     InputMediaPhoto(
                         media=_thumb,
@@ -114,7 +123,7 @@ class TgCall(PyTgCalls):
                     ),
                     reply_markup=buttons.controls(chat_id),
                 )
-                break  # başarıyla bağlandı
+                return
             except exceptions.NoActiveGroupCall:
                 await self.stop(chat_id)
                 await message.edit_text(_lang["error_no_call"])
@@ -138,22 +147,21 @@ class TgCall(PyTgCalls):
                 return
 
     # -------------------------
-    # SIRADAKİ PARÇAYI ÇAL
+    # SIRADAKİ PARÇA
     # -------------------------
     async def play_next(self, chat_id: int) -> None:
         if not await db.get_call(chat_id):
             return
 
-        # Mevcut şarkı mesajını temizle
+        # Eski mesajı sil
         current = queue.get_current(chat_id)
-        if current:
+        if current and getattr(current, "message_id", None):
             try:
-                if getattr(current, "message_id", None):
-                    await app.delete_messages(
-                        chat_id=chat_id,
-                        message_ids=[current.message_id],
-                        revoke=True,
-                    )
+                await app.delete_messages(
+                    chat_id=chat_id,
+                    message_ids=[current.message_id],
+                    revoke=True,
+                )
             except Exception:
                 pass
 
@@ -165,7 +173,7 @@ class TgCall(PyTgCalls):
         _lang = await lang.get_lang(chat_id)
         msg = await app.send_message(chat_id=chat_id, text=_lang["play_next"])
 
-        # Dosya yoksa indir
+        # Gerekirse indir
         if not getattr(media, "file_path", None):
             try:
                 media.file_path = await yt.download(media.id, video=media.video)
@@ -184,18 +192,23 @@ class TgCall(PyTgCalls):
     async def ping(self) -> float:
         if not self.clients:
             return 0.0
-        pings = [getattr(client, "ping", 0.0) for client in self.clients]
-        pings = [p for p in pings if isinstance(p, (int, float))]
-        return round(sum(pings) / len(pings), 2) if pings else 0.0
+        vals = []
+        for c in self.clients:
+            p = getattr(c, "ping", None)
+            if isinstance(p, (int, float)):
+                vals.append(p)
+        return round(sum(vals) / len(vals), 2) if vals else 0.0
 
     # -------------------------
-    # EVENT BAĞLAMA (uyumluysa)
+    # EVENT BAĞLAMA (sürüm güvenli)
     # -------------------------
     async def _wire_events(self, client: PyTgCalls) -> None:
         """
-        py-tgcalls 1.2.9 bazı ortamlarda farklı decorator isimleri barındırabiliyor.
-        Güvenli (getattr) bağlama yapıyoruz.
+        py-tgcalls 1.2.9’da event API’si paketlere göre değişebiliyor.
+        Uyum için dekoratörleri 'getattr' ile bağlarız.
         """
+
+        # Akış bitti → sıradakine geç
         on_stream_end = getattr(client, "on_stream_end", None)
         if callable(on_stream_end):
             try:
@@ -203,25 +216,27 @@ class TgCall(PyTgCalls):
                 async def _on_stream_end(_, update):
                     chat_id = getattr(update, "chat_id", None)
                     if chat_id is None:
-                        logger.warning("[calls] on_stream_end: chat_id missing on update")
+                        logger.warning("[calls] on_stream_end: chat_id missing")
                         return
                     try:
                         await self.play_next(chat_id)
                     except Exception as e:
                         logger.error(f"[calls] on_stream_end handler error: {e}")
             except Exception as e:
-                logger.warning(f"[calls] on_stream_end bind failed: {e}")
+                logger.warning(f"[calls] bind on_stream_end failed: {e}")
         else:
-            logger.info("[calls] on_stream_end decorator not available; auto-next disabled")
+            logger.info("[calls] on_stream_end decorator not available")
+
+        # Not: 1.2.9’da ChatUpdate benzeri event isimleri değişken.
+        # Uyuşmazlık yaşamamak için burada başka event bağlamıyoruz.
 
     # -------------------------
-    # BAŞLATMA
+    # BAŞLAT
     # -------------------------
     async def boot(self) -> None:
-        # py-tgcalls banner uyarısını kapat
         PyTgCallsSession.notice_displayed = True
 
-        # Tüm userbot client’larıyla PyTgCalls başlat
+        # Tüm userbot client’larını başlat
         for ub in userbot.clients:
             client = PyTgCalls(ub, cache_duration=100)
             await client.start()
