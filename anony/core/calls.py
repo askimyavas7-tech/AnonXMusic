@@ -39,7 +39,7 @@ class TgCall(PyTgCalls):
             await db.remove_call(chat_id)
         except:
             pass
-            async def play_media(
+            async def play_media(...)
         self,
         chat_id: int,
         message: Message,
