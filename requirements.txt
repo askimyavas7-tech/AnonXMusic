@@ -6,6 +6,10 @@ pymongo>=4.15.3
 pytgcrypto>=1.2.11
 python-dotenv~=1.1.1
 yt-dlp>=2025.10.22
-py-yt-search
 ffmpeg-python
+py-yt-search
+
+# ✅ Ses için doğru sürümler
 py-tgcalls==1.2.9
+ntgcalls==1.2.3
+pytgcalls==1.2.7
