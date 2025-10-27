@@ -6,35 +6,44 @@
 # PY-TGCALLS 1.2.9 (ses odaklı) uyumlu, Heroku-stabil sürüm.
 
 import asyncio
-from typing import List
+from typing import List, Optional
 
 from ntgcalls import ConnectionNotFound, TelegramServerError
 from pyrogram.types import InputMediaPhoto, Message
 from pytgcalls import PyTgCalls, exceptions
 from pytgcalls.pytgcalls_session import PyTgCallsSession
 
-# ---- py-tgcalls türleri, farklı yerleşimler için güvenli import ----
-try:
-    # En yaygın v1.2.x yerleşimi
-    from pytgcalls.types.input_stream import AudioPiped  # type: ignore
-    from pytgcalls.types.input_stream.quality import HighQualityAudio  # type: ignore
-except Exception:  # Bazı paketlerde input_stream altmodülü yok
-    try:
-        from pytgcalls.types import AudioPiped  # type: ignore
-        from pytgcalls.types import HighQualityAudio  # type: ignore
-    except Exception:
-        # Son çare: isimler farklıysa, çalışma anında patlamasın diye None verelim;
-        # play sırasında uygun hata mesajı basacağız.
-        AudioPiped = None  # type: ignore
-        HighQualityAudio = None  # type: ignore
-
 from anony import app, config, db, lang, logger, queue, userbot, yt
 from anony.helpers import Media, Track, buttons, thumb
 
 
-class TgCall(PyTgCalls):
+def _resolve_input_stream_classes():
+    """
+    Bazı py-tgcalls 1.2.9 paketlerinde sınıf yolları farklı olabiliyor.
+    Güvenli şekilde AudioPiped ve HighQualityAudio sınıflarını bulup döndürür.
+    Dönüş: (AudioPiped, HighQualityAudio) veya (None, None)
+    """
+    try:
+        # En yaygın düzen
+        from pytgcalls.types.input_stream import AudioPiped  # type: ignore
+        from pytgcalls.types.input_stream.quality import HighQualityAudio  # type: ignore
+        return AudioPiped, HighQualityAudio
+    except Exception:
+        try:
+            # Alternatif bazı build'ler
+            from pytgcalls.types import AudioPiped  # type: ignore
+            from pytgcalls.types import HighQualityAudio  # type: ignore
+            return AudioPiped, HighQualityAudio
+        except Exception as e:
+            logger.error(f"[calls] AudioPiped/HighQualityAudio import edilemedi: {e}")
+            return None, None
+
+
+class TgCall:
+    """
+    PyTgCalls client’larını yöneten ve ses akışını kontrol eden sarmalayıcı.
+    """
     def __init__(self):
-        # pyrogram.Client’lardan başlatılan PyTgCalls client listesi
         self.clients: List[PyTgCalls] = []
 
     # -------------------------
@@ -73,7 +82,7 @@ class TgCall(PyTgCalls):
         chat_id: int,
         message: Message,
         media: Media | Track,
-        seek_time: int = 0,  # Not: 1.2.9’da seek’i ffmpeg parametreleriyle vermek zor; basit tutuyoruz
+        seek_time: int = 0,  # Not: 1.2.9’da seek’i doğrudan desteklemiyoruz
     ) -> None:
         """
         Sadece ses akışı: AudioPiped + HighQualityAudio
@@ -81,7 +90,7 @@ class TgCall(PyTgCalls):
         _lang = await lang.get_lang(chat_id)
         client = await db.get_assistant(chat_id)
 
-        # Gerekli sınıflar mevcut mu?
+        AudioPiped, HighQualityAudio = _resolve_input_stream_classes()
         if AudioPiped is None or HighQualityAudio is None:
             await self.stop(chat_id)
             return await message.edit_text(_lang["error_tg_server"])
@@ -100,7 +109,10 @@ class TgCall(PyTgCalls):
             )
 
         # Akış oluştur
-        stream = AudioPiped(media.file_path, audio_parameters=HighQualityAudio())
+        stream = AudioPiped(
+            media.file_path,
+            audio_parameters=HighQualityAudio(),
+        )
 
         # Bağlan / yeniden dene
         retry = 0
@@ -214,7 +226,7 @@ class TgCall(PyTgCalls):
             try:
                 @on_stream_end()
                 async def _on_stream_end(_, update):
-                    chat_id = getattr(update, "chat_id", None)
+                    chat_id: Optional[int] = getattr(update, "chat_id", None)
                     if chat_id is None:
                         logger.warning("[calls] on_stream_end: chat_id missing")
                         return
