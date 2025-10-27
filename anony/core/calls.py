@@ -140,7 +140,7 @@ class TgCall(PyTgCalls):
         for client in self.clients:
 
             @client.on_stream_end()
-            async def stream_end_handler(_, update: types.StreamEnded) -> None:
+            async def stream_end_handler(_, update: types.StreamAudioEnded) -> None:
                 await self.play_next(update.chat_id)
 
             @client.on_closed_voice_chat()
