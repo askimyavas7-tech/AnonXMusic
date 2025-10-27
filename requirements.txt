@@ -9,6 +9,6 @@ yt-dlp>=2025.10.22
 py-yt-search
 ffmpeg-python
 
-# Sesli Sohbet İçin Stabil Sürüm
+# Sesli Sohbet Bağımlılıkları (UYUMLU)
 py-tgcalls==1.2.9
-ntgcalls==0.1.2
+ntgcalls==1.1.3
