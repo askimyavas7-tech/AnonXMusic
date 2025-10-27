@@ -3,10 +3,10 @@
 # Licensed under the MIT License.
 # This file is part of AnonXMusic
 
-# PY-TGCALLS 1.2.9 (ses odaklı) uyumlu, Heroku-stabil sürüm.
+# PY-TGCALLS 1.2.9 (ses) + NTGCALLS 1.1.3 uyumlu, Heroku-stabil sürüm.
 
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Tuple, Any, Callable
 
 from ntgcalls import ConnectionNotFound, TelegramServerError
 from pyrogram.types import InputMediaPhoto, Message
@@ -17,26 +17,38 @@ from anony import app, config, db, lang, logger, queue, userbot, yt
 from anony.helpers import Media, Track, buttons, thumb
 
 
-def _resolve_input_stream_classes():
+def _resolve_input_stream_classes() -> Tuple[Optional[type], Optional[type]]:
     """
-    Bazı py-tgcalls 1.2.9 paketlerinde sınıf yolları farklı olabiliyor.
-    Güvenli şekilde AudioPiped ve HighQualityAudio sınıflarını bulup döndürür.
-    Dönüş: (AudioPiped, HighQualityAudio) veya (None, None)
+    AudioPiped / HighQualityAudio bazı paketlerde farklı modüllerde.
+    Güvenli şekilde bulup döndürür; bulunamazsa (None, None).
     """
     try:
-        # En yaygın düzen
+        # En yaygın düzen (1.2.x)
         from pytgcalls.types.input_stream import AudioPiped  # type: ignore
         from pytgcalls.types.input_stream.quality import HighQualityAudio  # type: ignore
         return AudioPiped, HighQualityAudio
     except Exception:
         try:
-            # Alternatif bazı build'ler
+            # Alternatif build'ler
             from pytgcalls.types import AudioPiped  # type: ignore
             from pytgcalls.types import HighQualityAudio  # type: ignore
             return AudioPiped, HighQualityAudio
         except Exception as e:
             logger.error(f"[calls] AudioPiped/HighQualityAudio import edilemedi: {e}")
             return None, None
+
+
+def _try_call(obj: Any, preferred: str, fallbacks: list[str], *args, **kwargs):
+    """
+    Metod adı farklı sürümlerde değişebildiği için güvenli çağrı.
+    Örn: join_group_call vs join_call
+    """
+    names = [preferred, *fallbacks]
+    for name in names:
+        fn: Optional[Callable] = getattr(obj, name, None)
+        if callable(fn):
+            return fn(*args, **kwargs)
+    raise AttributeError(f"Method not found on {type(obj).__name__}: {names}")
 
 
 class TgCall:
@@ -52,19 +64,20 @@ class TgCall:
     async def pause(self, chat_id: int) -> bool:
         client = await db.get_assistant(chat_id)
         await db.playing(chat_id, paused=True)
-        # 1.2.9’da metod isimleri pause_stream/resume_stream
-        return await client.pause_stream(chat_id)
+        # pause_stream (1.2.9), bazı varyantlarda pause
+        return await _try_call(client, "pause_stream", ["pause"], chat_id)
 
     async def resume(self, chat_id: int) -> bool:
         client = await db.get_assistant(chat_id)
         await db.playing(chat_id, paused=False)
-        return await client.resume_stream(chat_id)
+        # resume_stream (1.2.9), bazı varyantlarda resume
+        return await _try_call(client, "resume_stream", ["resume"], chat_id)
 
     async def stop(self, chat_id: int) -> None:
         client = await db.get_assistant(chat_id)
-        # Sesten çık
+        # Sesten çık (1.2.9: leave_group_call; bazı paketlerde leave_call)
         try:
-            await client.leave_call(chat_id, False)
+            await _try_call(client, "leave_group_call", ["leave_call"], chat_id, False)
         except Exception:
             pass
         # Kuyruk + DB temizliği
@@ -82,7 +95,7 @@ class TgCall:
         chat_id: int,
         message: Message,
         media: Media | Track,
-        seek_time: int = 0,  # Not: 1.2.9’da seek’i doğrudan desteklemiyoruz
+        seek_time: int = 0,  # 1.2.9’da ffmpeg seek doğrudan yok; basit akış
     ) -> None:
         """
         Sadece ses akışı: AudioPiped + HighQualityAudio
@@ -118,7 +131,8 @@ class TgCall:
         retry = 0
         while True:
             try:
-                await client.join_call(chat_id, stream)
+                # 1.2.9: join_group_call; bazı varyantlarda join_call
+                await _try_call(client, "join_group_call", ["join_call"], chat_id, stream)
                 media.playing = True
                 await db.add_call(chat_id)
 
@@ -145,7 +159,7 @@ class TgCall:
                 if retry <= 3:
                     backoff = min(1.5 * retry, 4.0)
                     logger.warning(
-                        f"[calls] join_call retry {retry}/3 (sleep {backoff:.1f}s) reason={type(e).__name__}"
+                        f"[calls] join_group_call retry {retry}/3 (sleep {backoff:.1f}s) reason={type(e).__name__}"
                     )
                     await asyncio.sleep(backoff)
                     continue
@@ -153,7 +167,7 @@ class TgCall:
                 await message.edit_text(_lang["error_tg_server"])
                 return
             except Exception as e:
-                logger.error(f"[calls] join_call unexpected error: {e}")
+                logger.error(f"[calls] join_group_call unexpected error: {e}")
                 await self.stop(chat_id)
                 await message.edit_text(_lang["error_tg_server"])
                 return
@@ -239,8 +253,8 @@ class TgCall:
         else:
             logger.info("[calls] on_stream_end decorator not available")
 
-        # Not: 1.2.9’da ChatUpdate benzeri event isimleri değişken.
-        # Uyuşmazlık yaşamamak için burada başka event bağlamıyoruz.
+        # Not: ChatUpdate benzeri eventler farklı sürümlerde değişken.
+        # Uyumsuzluk yaşamamak için ekstra event bağlamıyoruz.
 
     # -------------------------
     # BAŞLAT
