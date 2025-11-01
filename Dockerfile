@@ -1,9 +1,21 @@
-FROM python:latest
+FROM python:3.10-slim-bullseye
 
-RUN apt-get update -y && apt-get upgrade -y
-RUN apt-get install -y --no-install-recommends ffmpeg && apt-get clean
+# Dependencies & FFmpeg
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg python3-venv && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install -U pip
-RUN pip3 install -U -r requirements.txt
+# Copy project
+WORKDIR /app
+COPY . .
 
-CMD bash start
+# Python deps
+RUN pip3 install --upgrade pip
+RUN pip3 install -r requirements.txt
+
+# Start Permission
+RUN chmod +x start.sh
+
+# Launch bot
+CMD ["bash", "start.sh"]
